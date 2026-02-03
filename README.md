@@ -142,11 +142,6 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 - Uses Yaru icon theme by Ubuntu Design Team
 - Built with GNOME Shell Extension API
 
-## Author
-
-**Maciek Szamski**
-- GitHub: [@szamski](https://github.com/szamski)
-
 ## Changelog
 
 ### Version 1.0.0 (2026-02-03)
