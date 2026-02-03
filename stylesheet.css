@@ -1,0 +1,13 @@
+/* Tray Toggle Extension Styles */
+
+.tray-toggle-button {
+    /* Optional: Add custom styling for the toggle button */
+}
+
+.tray-toggle-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.tray-toggle-button:active {
+    background-color: rgba(255, 255, 255, 0.15);
+}
