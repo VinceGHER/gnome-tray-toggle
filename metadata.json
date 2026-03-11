@@ -9,6 +9,8 @@
   ],
   "version": 1,
   "url": "https://github.com/szamski/gnome-tray-toggle",
-  "settings-schema": "",
-  "gettext-domain": ""
+  "gettext-domain": "",
+  "donations": {
+    "github": "szamski"
+  }
 }
