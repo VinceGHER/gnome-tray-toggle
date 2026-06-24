@@ -1,6 +1,7 @@
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
@@ -9,13 +10,14 @@ class TrayToggleButton extends PanelMenu.Button {
     _init() {
         super._init(0.0, 'Tray Toggle', false);
 
-        // State tracking
-        this._trayVisible = true;
+        // State tracking - start collapsed by default
+        this._trayVisible = false;
         this._hiddenActors = [];
+        this._collapseTimeoutId = 0;
 
-        // Create icon
+        // Create icon (collapsed state icon)
         this._icon = new St.Icon({
-            icon_name: 'orientation-portrait-right-symbolic',
+            icon_name: 'orientation-portrait-left-symbolic',
             style_class: 'system-status-icon',
         });
 
@@ -23,6 +25,15 @@ class TrayToggleButton extends PanelMenu.Button {
 
         // Connect click handler
         this.connect('button-press-event', this._onButtonPress.bind(this));
+
+        // Collapse the tray shortly after startup, once indicators have loaded
+        this._collapseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            this._collapseTimeoutId = 0;
+            if (!this._trayVisible) {
+                this._hideTray();
+            }
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _onButtonPress() {
@@ -123,6 +134,12 @@ class TrayToggleButton extends PanelMenu.Button {
     }
 
     destroy() {
+        // Cancel pending startup collapse if still scheduled
+        if (this._collapseTimeoutId) {
+            GLib.source_remove(this._collapseTimeoutId);
+            this._collapseTimeoutId = 0;
+        }
+
         // Restore tray visibility on destroy
         if (!this._trayVisible) {
             this._showTray();

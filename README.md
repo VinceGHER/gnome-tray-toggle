@@ -1,6 +1,6 @@
 # GNOME Tray Toggle
 
-A GNOME Shell extension that adds a toggle button to hide/show system tray application icons with smooth animations.
+A GNOME Shell extension that adds a toggle button to hide/show system tray application icons with smooth animations. The tray starts **collapsed by default**, keeping your panel clean until you want to peek at your background apps.
 
 ![GNOME Shell](https://img.shields.io/badge/GNOME%20Shell-47%20|%2048%20|%2049-blue)
 ![License](https://img.shields.io/badge/license-GPLv3-green)
