@@ -1,149 +1,231 @@
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
-import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+
+const SYSTEM_ROLES = new Set([
+    'activities',
+    'appMenu',
+    'dateMenu',
+    'quickSettings',
+    'keyboard',
+    'a11y',
+    'dwellClick',
+    'screenSharing',
+    'screenRecording',
+    'unsafeModeMenu',
+    'remoteAccess',
+    'thunderbolt',
+    'tray-toggle',
+]);
+
+function isApplicationTrayRole(role) {
+    return role.startsWith('appindicator-');
+}
+
+function getPanelBoxes() {
+    return [Main.panel._leftBox, Main.panel._centerBox, Main.panel._rightBox]
+        .filter(box => box);
+}
 
 const TrayToggleButton = GObject.registerClass(
 class TrayToggleButton extends PanelMenu.Button {
     _init() {
-        super._init(0.0, 'Tray Toggle', false);
+        // GNOME 50: creating a menu enables an internal ClickGesture that
+        // swallows presses, so button-press-event never runs.
+        super._init(0.0, 'Tray Toggle', true);
 
-        // State tracking - start collapsed by default
-        this._trayVisible = false;
+        this._trayVisible = true;
         this._hiddenActors = [];
-        this._collapseTimeoutId = 0;
+        this._boxConnections = [];
+        this._iconAnim = 0;
 
-        // Create icon (collapsed state icon)
         this._icon = new St.Icon({
-            icon_name: 'orientation-portrait-left-symbolic',
+            icon_name: 'orientation-portrait-right-symbolic',
             style_class: 'system-status-icon',
         });
-
+        this._icon.set_pivot_point(0.5, 0.5);
         this.add_child(this._icon);
 
-        // Connect click handler
-        this.connect('button-press-event', this._onButtonPress.bind(this));
+        this._connectActivation();
+        this._watchPanelBoxes();
+    }
 
-        // Collapse the tray shortly after startup, once indicators have loaded
-        this._collapseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
-            this._collapseTimeoutId = 0;
-            if (!this._trayVisible) {
-                this._hideTray();
-            }
-            return GLib.SOURCE_REMOVE;
+    _connectActivation() {
+        if (this._clickGesture) {
+            this._clickGesture.connect('recognize', () => this._toggleTray());
+            this._clickGesture.set_enabled(true);
+            return;
+        }
+
+        if (Clutter.ClickGesture) {
+            this._ownClickGesture = new Clutter.ClickGesture();
+            this._ownClickGesture.set_recognize_on_press(true);
+            this._ownClickGesture.connect('recognize', () => this._toggleTray());
+            this.add_action(this._ownClickGesture);
+            return;
+        }
+
+        this.connect('button-press-event', () => {
+            this._toggleTray();
+            return Clutter.EVENT_STOP;
         });
     }
 
-    _onButtonPress() {
-        this._trayVisible = !this._trayVisible;
-        this._updateTrayVisibility();
-        return Clutter.EVENT_PROPAGATE;
-    }
-
-    _updateTrayVisibility() {
-        // Animate icon change with a subtle rotation
-        this._icon.ease({
-            rotation_angle_z: 360,
-            duration: 150,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => {
-                this._icon.rotation_angle_z = 0;
-            }
-        });
-
-        // Update icon and tray visibility
-        if (this._trayVisible) {
-            this._icon.icon_name = 'orientation-portrait-right-symbolic';
-            this._showTray();
-        } else {
-            this._icon.icon_name = 'orientation-portrait-left-symbolic';
-            this._hideTray();
+    _watchPanelBoxes() {
+        for (const box of getPanelBoxes()) {
+            const id = box.connect('child-added', () => {
+                if (!this._trayVisible)
+                    this._hideTray();
+            });
+            this._boxConnections.push([box, id]);
         }
     }
 
-    _hideTray() {
-        this._hiddenActors = [];
-        const rightBox = Main.panel._rightBox;
+    _toggleTray() {
+        this._trayVisible = !this._trayVisible;
+        this._updateTrayVisibility();
+    }
 
-        if (!rightBox) return;
+    _updateTrayVisibility() {
+        this._animateIcon();
 
-        // System items to keep visible (never hide these)
-        const systemItems = [
-            'quickSettings',      // System menu (network, sound, power, etc.)
-            'keyboard',           // Keyboard layout
-            'dwellClick',         // Accessibility
-            'screenSharing',      // Screen sharing indicator
-            'screenRecording',    // Screen recording indicator
-            'tray-toggle',        // Our own button
-        ];
+        if (this._trayVisible)
+            this._showTray();
+        else
+            this._hideTray();
+    }
 
-        // Get all children in the right box
-        const children = rightBox.get_children();
+    _animateIcon() {
+        const targetName = this._trayVisible
+            ? 'orientation-portrait-right-symbolic'
+            : 'orientation-portrait-left-symbolic';
 
-        for (let child of children) {
-            // Skip our own button
-            if (child === this.container) continue;
+        this._iconAnim++;
+        const anim = this._iconAnim;
 
-            // Check if this child belongs to a system item
-            let isSystemItem = false;
-            for (let key in Main.panel.statusArea) {
-                if (systemItems.includes(key) &&
-                    Main.panel.statusArea[key].container === child) {
-                    isSystemItem = true;
-                    break;
-                }
-            }
+        this._icon.remove_all_transitions();
+        this._icon.rotation_angle_z = 0;
+        this._icon.set_pivot_point(0.5, 0.5);
 
-            // Hide only non-system items (AppIndicators) with slide animation
-            if (!isSystemItem && child.visible) {
-                this._hiddenActors.push(child);
+        this._icon.ease({
+            opacity: 0,
+            duration: 90,
+            mode: Clutter.AnimationMode.EASE_IN_QUAD,
+            onComplete: () => {
+                if (anim !== this._iconAnim)
+                    return;
 
-                // Slide to the right and fade out
-                child.ease({
-                    opacity: 0,
-                    translation_x: 50,  // Slide 50px to the right
-                    duration: 250,
-                    mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
-                    onComplete: () => {
-                        child.hide();
-                        child.translation_x = 0;  // Reset for next show
-                    }
+                this._icon.icon_name = targetName;
+                this._icon.ease({
+                    opacity: 255,
+                    duration: 90,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                 });
+            },
+        });
+    }
+
+    _getTrayActors() {
+        const actors = [];
+        const seen = new Set();
+
+        const addActor = actor => {
+            if (!actor || seen.has(actor) || actor === this.container)
+                return;
+            seen.add(actor);
+            actors.push(actor);
+        };
+
+        for (const [role, indicator] of Object.entries(Main.panel.statusArea)) {
+            if (!indicator || SYSTEM_ROLES.has(role))
+                continue;
+            if (!isApplicationTrayRole(role))
+                continue;
+            addActor(indicator.container ?? indicator);
+        }
+
+        if (actors.length > 0)
+            return actors;
+
+        const systemContainers = new Set();
+        for (const role of SYSTEM_ROLES) {
+            const item = Main.panel.statusArea[role];
+            if (item?.container)
+                systemContainers.add(item.container);
+        }
+
+        const boxes = [Main.panel._rightBox, Main.panel._centerBox].filter(Boolean);
+        for (const box of boxes) {
+            for (const child of box.get_children()) {
+                if (child === this.container || systemContainers.has(child))
+                    continue;
+
+                let ownedByStatusArea = false;
+                for (const indicator of Object.values(Main.panel.statusArea)) {
+                    if (indicator?.container === child) {
+                        ownedByStatusArea = true;
+                        break;
+                    }
+                }
+
+                if (ownedByStatusArea)
+                    addActor(child);
             }
+        }
+
+        return actors;
+    }
+
+    _hideTray() {
+        const alreadyHidden = new Set(this._hiddenActors);
+
+        for (const child of this._getTrayActors()) {
+            if (alreadyHidden.has(child) || !child.visible)
+                continue;
+
+            this._hiddenActors.push(child);
+            child.ease({
+                opacity: 0,
+                translation_x: 50,
+                duration: 250,
+                mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
+                onComplete: () => {
+                    child.hide();
+                    child.translation_x = 0;
+                },
+            });
         }
     }
 
     _showTray() {
-        // Restore visibility of previously hidden actors with slide animation
-        for (let actor of this._hiddenActors) {
-            actor.opacity = 0;
-            actor.translation_x = 50;  // Start 50px to the right
-            actor.show();
+        for (const actor of this._hiddenActors) {
+            if (!actor)
+                continue;
 
-            // Slide from right and fade in
+            actor.opacity = 0;
+            actor.translation_x = 50;
+            actor.show();
             actor.ease({
                 opacity: 255,
                 translation_x: 0,
                 duration: 250,
-                mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD
+                mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
             });
         }
         this._hiddenActors = [];
     }
 
     destroy() {
-        // Cancel pending startup collapse if still scheduled
-        if (this._collapseTimeoutId) {
-            GLib.source_remove(this._collapseTimeoutId);
-            this._collapseTimeoutId = 0;
+        for (const [box, id] of this._boxConnections) {
+            box.disconnect(id);
         }
+        this._boxConnections = [];
 
-        // Restore tray visibility on destroy
-        if (!this._trayVisible) {
+        if (!this._trayVisible)
             this._showTray();
-        }
+
         super.destroy();
     }
 });
@@ -154,15 +236,11 @@ export default class TrayToggleExtension {
     }
 
     enable() {
-        // Create the toggle button
         this._button = new TrayToggleButton();
-
-        // Add to panel at position 1 (just left of most app indicators)
         Main.panel.addToStatusArea('tray-toggle', this._button, 1, 'right');
     }
 
     disable() {
-        // Clean up
         if (this._button) {
             this._button.destroy();
             this._button = null;
